@@ -56,7 +56,8 @@ func (s *Store) migrate() error {
 			amount      REAL NOT NULL,
 			description TEXT DEFAULT '',
 			category    TEXT DEFAULT '',
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			voided_at   DATETIME
 		);
 
 		-- Each expense has splits: who owes what portion.
@@ -76,7 +77,12 @@ func (s *Store) migrate() error {
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add voided_at to existing databases (no-op if column already exists)
+	s.db.Exec(`ALTER TABLE expenses ADD COLUMN voided_at DATETIME`)
+	return nil
 }
 
 // ── Group + Member operations ────────────────────────────────────────
@@ -206,7 +212,7 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 	// Money paid out (they're owed this much)
 	rows, err := s.db.Query(`
 		SELECT payer_id, SUM(amount) FROM expenses
-		WHERE group_id = ? GROUP BY payer_id
+		WHERE group_id = ? AND voided_at IS NULL GROUP BY payer_id
 	`, groupID)
 	if err != nil {
 		return nil, err
@@ -227,7 +233,7 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		SELECT es.member_id, SUM(es.amount)
 		FROM expense_splits es
 		JOIN expenses e ON es.expense_id = e.id
-		WHERE e.group_id = ?
+		WHERE e.group_id = ? AND e.voided_at IS NULL
 		GROUP BY es.member_id
 	`, groupID)
 	if err != nil {
@@ -261,8 +267,8 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		if err := rows3.Scan(&fromID, &toID, &total); err != nil {
 			return nil, err
 		}
-		balances[fromID] += total // they paid, so they're owed less
-		balances[toID] -= total   // they received, so they owe less
+		balances[fromID] -= total // they paid out, so their positive balance decreases
+		balances[toID] += total   // they received payment, so their negative balance decreases
 	}
 
 	return balances, nil
@@ -309,7 +315,7 @@ func (s *Store) GetAllMembers(groupID int64) ([]*MemberInfo, error) {
 func (s *Store) GetSpendingSince(groupID int64, since time.Time) (map[string]float64, float64, error) {
 	rows, err := s.db.Query(`
 		SELECT category, SUM(amount) FROM expenses
-		WHERE group_id = ? AND created_at >= ?
+		WHERE group_id = ? AND created_at >= ? AND voided_at IS NULL
 		GROUP BY category
 	`, groupID, since)
 	if err != nil {
@@ -329,4 +335,119 @@ func (s *Store) GetSpendingSince(groupID int64, since time.Time) (map[string]flo
 		total += amt
 	}
 	return categories, total, nil
+}
+
+// ── Expense editing ──────────────────────────────────────────────────
+
+// ExpenseRecord holds the full data for a single expense including its splits.
+type ExpenseRecord struct {
+	ID          int64
+	PayerID     int64
+	Amount      float64
+	Description string
+	Category    string
+	Splits      map[int64]float64
+}
+
+// GetLastExpense returns the most recent non-voided expense for a group.
+func (s *Store) GetLastExpense(groupID int64) (*ExpenseRecord, error) {
+	row := s.db.QueryRow(`
+		SELECT id, payer_id, amount, description, category
+		FROM expenses
+		WHERE group_id = ? AND voided_at IS NULL
+		ORDER BY created_at DESC LIMIT 1
+	`, groupID)
+
+	e := &ExpenseRecord{}
+	if err := row.Scan(&e.ID, &e.PayerID, &e.Amount, &e.Description, &e.Category); err != nil {
+		return nil, err
+	}
+	splits, err := s.loadSplits(e.ID)
+	if err != nil {
+		return nil, err
+	}
+	e.Splits = splits
+	return e, nil
+}
+
+// FindExpenseByRef finds the most recent non-voided expense matching a description or amount string.
+func (s *Store) FindExpenseByRef(groupID int64, ref string) (*ExpenseRecord, error) {
+	row := s.db.QueryRow(`
+		SELECT id, payer_id, amount, description, category
+		FROM expenses
+		WHERE group_id = ? AND voided_at IS NULL
+		  AND (description LIKE ? OR CAST(amount AS TEXT) = ?)
+		ORDER BY created_at DESC LIMIT 1
+	`, groupID, "%"+ref+"%", ref)
+
+	e := &ExpenseRecord{}
+	if err := row.Scan(&e.ID, &e.PayerID, &e.Amount, &e.Description, &e.Category); err != nil {
+		return nil, err
+	}
+	splits, err := s.loadSplits(e.ID)
+	if err != nil {
+		return nil, err
+	}
+	e.Splits = splits
+	return e, nil
+}
+
+func (s *Store) loadSplits(expenseID int64) (map[int64]float64, error) {
+	rows, err := s.db.Query(
+		`SELECT member_id, amount FROM expense_splits WHERE expense_id = ?`, expenseID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	splits := make(map[int64]float64)
+	for rows.Next() {
+		var memberID int64
+		var amt float64
+		if err := rows.Scan(&memberID, &amt); err != nil {
+			return nil, err
+		}
+		splits[memberID] = amt
+	}
+	return splits, nil
+}
+
+// VoidExpense soft-deletes an expense by setting voided_at.
+func (s *Store) VoidExpense(expenseID int64) error {
+	_, err := s.db.Exec(
+		`UPDATE expenses SET voided_at = CURRENT_TIMESTAMP WHERE id = ?`, expenseID,
+	)
+	return err
+}
+
+// EditExpense updates an expense's amount/description and replaces its splits in one transaction.
+func (s *Store) EditExpense(expenseID int64, newAmount float64, newDescription string, newSplits map[int64]float64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`UPDATE expenses SET amount = ?, description = ? WHERE id = ?`,
+		newAmount, newDescription, expenseID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`DELETE FROM expense_splits WHERE expense_id = ?`, expenseID); err != nil {
+		return err
+	}
+
+	for memberID, amt := range newSplits {
+		if _, err = tx.Exec(
+			`INSERT INTO expense_splits (expense_id, member_id, amount) VALUES (?, ?, ?)`,
+			expenseID, memberID, amt,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

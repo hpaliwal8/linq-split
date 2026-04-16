@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -36,20 +39,16 @@ func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	timestamp := r.Header.Get("X-Webhook-Timestamp")
 	signature := r.Header.Get("X-Webhook-Signature")
 	if !linq.VerifySignature(body, timestamp, signature, c.WebhookSecret) {
-		log.Printf("WARN signature mismatch — skipping for now (timestamp=%s)", timestamp)
-		// TODO: re-enable once signature format is confirmed
-		// http.Error(w, "invalid signature", http.StatusUnauthorized)
-		// return
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
 	}
 
 	// ── Parse the event ──────────────────────────────────────────
-	log.Printf("DEBUG body: %s", string(body))
 	var event linq.InboundEvent
 	if err := json.Unmarshal(body, &event); err != nil {
 		http.Error(w, "bad payload", http.StatusBadRequest)
 		return
 	}
-	log.Printf("DEBUG event_type=%q chat_id=%q parts=%d sender=%v", event.EventType, func() string { if event.Data.Chat != nil { return event.Data.Chat.ID }; return "" }(), len(event.Data.Parts), event.Data.SenderHandle)
 
 	// Respond immediately — process async
 	w.WriteHeader(http.StatusOK)
@@ -138,6 +137,10 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		reply, err = c.handleQuery(groupID, parsed)
 	case parser.IntentRegister:
 		reply, err = c.handleRegister(groupID, senderHandle, memberID, parsed)
+	case parser.IntentVoidExpense:
+		reply, err = c.handleVoidExpense(groupID, parsed)
+	case parser.IntentEditExpense:
+		reply, err = c.handleEditExpense(groupID, parsed)
 	case parser.IntentIgnore:
 		return // not an expense-related message
 	}
@@ -164,10 +167,18 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 
 // ── Intent handlers ──────────────────────────────────────────────────
 
+// unknownMemberReply returns a friendly message when a handle can't be found.
+func unknownMemberReply(handle string) string {
+	return fmt.Sprintf("I don't recognise %s yet — they need to send a message in this group first.", handle)
+}
+
 func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (string, error) {
 	payerID, err := c.Store.GetMemberByHandle(groupID, p.Payer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknownMemberReply(p.Payer), nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("unknown payer %s: %w", p.Payer, err)
+		return "", err
 	}
 
 	allMembers, err := c.Store.GetAllMembers(groupID)
@@ -197,8 +208,11 @@ func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (strin
 
 func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (string, error) {
 	payerID, err := c.Store.GetMemberByHandle(groupID, p.Payer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknownMemberReply(p.Payer), nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("unknown payer %s: %w", p.Payer, err)
+		return "", err
 	}
 
 	allMembers, err := c.Store.GetAllMembers(groupID)
@@ -274,13 +288,19 @@ func (c *Config) handleCheckBalance(groupID int64) (string, error) {
 
 func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, error) {
 	fromID, err := c.Store.GetMemberByHandle(groupID, p.SettleFrom)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknownMemberReply(p.SettleFrom), nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("unknown member %s: %w", p.SettleFrom, err)
+		return "", err
 	}
 
 	toID, err := c.Store.GetMemberByHandle(groupID, p.SettleTo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unknownMemberReply(p.SettleTo), nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("unknown member %s: %w", p.SettleTo, err)
+		return "", err
 	}
 
 	if err := c.Store.AddSettlement(groupID, fromID, toID, p.Amount); err != nil {
@@ -293,6 +313,65 @@ func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, e
 		"Settled! %s paid %s $%.2f. Balances updated.",
 		displayName(fromInfo), displayName(toInfo), p.Amount,
 	), nil
+}
+
+func (c *Config) handleVoidExpense(groupID int64, p *parser.ParsedMessage) (string, error) {
+	e, err := c.resolveExpenseRef(groupID, p.ExpenseRef)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "Couldn't find that expense.", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if err := c.Store.VoidExpense(e.ID); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Removed: $%.2f for %s.", e.Amount, e.Description), nil
+}
+
+func (c *Config) handleEditExpense(groupID int64, p *parser.ParsedMessage) (string, error) {
+	e, err := c.resolveExpenseRef(groupID, p.ExpenseRef)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "Couldn't find that expense.", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	newAmount := e.Amount
+	if p.NewAmount > 0 {
+		newAmount = p.NewAmount
+	}
+	newDescription := e.Description
+	if p.NewDescription != "" {
+		newDescription = p.NewDescription
+	}
+
+	// Recalculate splits proportionally if amount changed
+	newSplits := e.Splits
+	if p.NewAmount > 0 && e.Amount > 0 {
+		ratio := p.NewAmount / e.Amount
+		newSplits = make(map[int64]float64, len(e.Splits))
+		for memberID, amt := range e.Splits {
+			newSplits[memberID] = math.Round(amt*ratio*100) / 100
+		}
+	}
+
+	if err := c.Store.EditExpense(e.ID, newAmount, newDescription, newSplits); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Updated: $%.2f for %s.", newAmount, newDescription), nil
+}
+
+// resolveExpenseRef finds an expense by ref string — "last" or empty returns the most recent.
+func (c *Config) resolveExpenseRef(groupID int64, ref string) (*db.ExpenseRecord, error) {
+	if ref == "" || strings.ToLower(ref) == "last" {
+		return c.Store.GetLastExpense(groupID)
+	}
+	return c.Store.FindExpenseByRef(groupID, ref)
 }
 
 func (c *Config) handleRegister(groupID int64, handle string, memberID int64, p *parser.ParsedMessage) (string, error) {

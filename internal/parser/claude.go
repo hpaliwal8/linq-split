@@ -19,6 +19,8 @@ const (
 	IntentSettle       Intent = "settle"
 	IntentQuery        Intent = "query"
 	IntentRegister     Intent = "register"
+	IntentVoidExpense  Intent = "void_expense"
+	IntentEditExpense  Intent = "edit_expense"
 	IntentIgnore       Intent = "ignore"
 )
 
@@ -34,8 +36,11 @@ type ParsedMessage struct {
 	SettleFrom    string             `json:"settle_from,omitempty"`
 	SettleTo      string             `json:"settle_to,omitempty"`
 	QueryText     string             `json:"query_text,omitempty"`
-	RegisterName  string             `json:"register_name,omitempty"`
-	Confidence    float64            `json:"confidence"`
+	RegisterName   string             `json:"register_name,omitempty"`
+	ExpenseRef     string             `json:"expense_ref,omitempty"`
+	NewAmount      float64            `json:"new_amount,omitempty"`
+	NewDescription string             `json:"new_description,omitempty"`
+	Confidence     float64            `json:"confidence"`
 }
 
 // ClaudeParser calls the Anthropic API to parse expense messages.
@@ -64,7 +69,9 @@ Classify each message into exactly one intent:
 
 2. "custom_split" — expense with uneven or partial split.
    Examples: "$60 dinner, exclude @Jake", "$45 pizza, @Hitansh owes $20, @Mike owes $25"
-   Extract: amount, description, category, payer, excluded list OR custom_split map.
+   Also handles parts/ratio splits — compute the dollar amounts yourself before returning.
+   Example: "$40 groceries, @Alice 3 parts @Bob 1 part" → total 4 parts, Alice=$30, Bob=$10 → custom_split: {"@Alice": 30, "@Bob": 10}
+   Extract: amount, description, category, payer, excluded list OR custom_split map (always in dollars).
 
 3. "check_balance" — user wants to see who owes what.
    Examples: "who owes what?", "balances", "what's the tally?"
@@ -81,12 +88,20 @@ Classify each message into exactly one intent:
    Examples: "I'm Hitansh", "call me Jake", "my name is Sarah"
    Extract: register_name (just the name, no extra words).
 
-7. "ignore" — not related to expenses at all.
+7. "void_expense" — cancel or delete a previously logged expense.
+   Examples: "remove the last expense", "delete the pizza charge", "undo that $47 groceries"
+   Extract: expense_ref ("last" if most recent, otherwise the description or amount mentioned).
+
+8. "edit_expense" — change the amount or description of a previous expense.
+   Examples: "change last expense to $35", "the groceries were actually $52", "update pizza to $30"
+   Extract: expense_ref, new_amount (if changing amount), new_description (if changing description).
+
+9. "ignore" — not related to expenses at all.
    Examples: "lol", "anyone want to grab coffee?", "good morning"
 
 Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema:
 {
-  "intent": "add_expense|custom_split|check_balance|settle|query|register|ignore",
+  "intent": "add_expense|custom_split|check_balance|settle|query|register|void_expense|edit_expense|ignore",
   "amount": 0.00,
   "description": "",
   "category": "",
@@ -97,6 +112,9 @@ Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema
   "settle_to": "",
   "query_text": "",
   "register_name": "",
+  "expense_ref": "",
+  "new_amount": 0.00,
+  "new_description": "",
   "confidence": 0.95
 }
 
@@ -168,6 +186,11 @@ func (p *ClaudeParser) Parse(text, senderHandle string, groupMembers []string) (
 	responseText := claudeResp.Content[0].Text
 	if err := json.Unmarshal([]byte(responseText), &parsed); err != nil {
 		return nil, fmt.Errorf("unmarshal parsed message (raw: %s): %w", responseText, err)
+	}
+
+	// Enforce confidence threshold — treat low-confidence parses as ignored
+	if parsed.Confidence < 0.7 {
+		parsed.Intent = IntentIgnore
 	}
 
 	// Default payer to sender if not specified
