@@ -18,6 +18,7 @@ const (
 	IntentCheckBalance Intent = "check_balance"
 	IntentSettle       Intent = "settle"
 	IntentQuery        Intent = "query"
+	IntentRegister     Intent = "register"
 	IntentIgnore       Intent = "ignore"
 )
 
@@ -30,10 +31,11 @@ type ParsedMessage struct {
 	Payer       string             `json:"payer,omitempty"`        // handle/phone of who paid
 	Excluded    []string           `json:"excluded,omitempty"`     // handles to exclude from split
 	CustomSplit map[string]float64 `json:"custom_split,omitempty"` // handle -> specific amount owed
-	SettleFrom  string             `json:"settle_from,omitempty"`
-	SettleTo    string             `json:"settle_to,omitempty"`
-	QueryText   string             `json:"query_text,omitempty"`
-	Confidence  float64            `json:"confidence"`
+	SettleFrom    string             `json:"settle_from,omitempty"`
+	SettleTo      string             `json:"settle_to,omitempty"`
+	QueryText     string             `json:"query_text,omitempty"`
+	RegisterName  string             `json:"register_name,omitempty"`
+	Confidence    float64            `json:"confidence"`
 }
 
 // ClaudeParser calls the Anthropic API to parse expense messages.
@@ -75,12 +77,16 @@ Classify each message into exactly one intent:
    Examples: "how much have we spent this month?", "what did we spend on food?"
    Extract: query_text.
 
-6. "ignore" — not related to expenses at all.
+6. "register" — someone is telling the bot their name.
+   Examples: "I'm Hitansh", "call me Jake", "my name is Sarah"
+   Extract: register_name (just the name, no extra words).
+
+7. "ignore" — not related to expenses at all.
    Examples: "lol", "anyone want to grab coffee?", "good morning"
 
 Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema:
 {
-  "intent": "add_expense|custom_split|check_balance|settle|query|ignore",
+  "intent": "add_expense|custom_split|check_balance|settle|query|register|ignore",
   "amount": 0.00,
   "description": "",
   "category": "",
@@ -90,10 +96,13 @@ Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema
   "settle_from": "",
   "settle_to": "",
   "query_text": "",
+  "register_name": "",
   "confidence": 0.95
 }
 
-Set confidence between 0 and 1. If below 0.7, set intent to "ignore" — we'd rather miss an expense than log a wrong one.`
+Set confidence between 0 and 1. If below 0.7, set intent to "ignore" — we'd rather miss an expense than log a wrong one.
+
+You MUST respond with raw JSON only. Do not use markdown code fences, do not include ` + "```" + `json, do not add any explanation or commentary. Your entire response must be directly parseable by JSON.parse().`
 
 // Parse sends a message to Claude and returns structured expense data.
 func (p *ClaudeParser) Parse(text, senderHandle string, groupMembers []string) (*ParsedMessage, error) {

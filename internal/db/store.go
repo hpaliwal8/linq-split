@@ -83,19 +83,12 @@ func (s *Store) migrate() error {
 
 // EnsureGroup creates a group if it doesn't exist, returns its ID.
 func (s *Store) EnsureGroup(chatID string) (int64, error) {
-	res, err := s.db.Exec(
+	_, err := s.db.Exec(
 		`INSERT INTO groups (chat_id) VALUES (?) ON CONFLICT(chat_id) DO NOTHING`, chatID,
 	)
 	if err != nil {
 		return 0, err
 	}
-
-	// If inserted, return new ID
-	if id, _ := res.LastInsertId(); id > 0 {
-		return id, nil
-	}
-
-	// Otherwise look it up
 	var id int64
 	err = s.db.QueryRow(`SELECT id FROM groups WHERE chat_id = ?`, chatID).Scan(&id)
 	return id, err
@@ -103,7 +96,7 @@ func (s *Store) EnsureGroup(chatID string) (int64, error) {
 
 // EnsureMember creates a member if they don't exist, returns their ID.
 func (s *Store) EnsureMember(groupID int64, handle, name string) (int64, error) {
-	res, err := s.db.Exec(
+	_, err := s.db.Exec(
 		`INSERT INTO members (group_id, handle, name) VALUES (?, ?, ?)
 		 ON CONFLICT(group_id, handle) DO UPDATE SET name = excluded.name`,
 		groupID, handle, name,
@@ -111,11 +104,6 @@ func (s *Store) EnsureMember(groupID int64, handle, name string) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
-
-	if id, _ := res.LastInsertId(); id > 0 {
-		return id, nil
-	}
-
 	var id int64
 	err = s.db.QueryRow(
 		`SELECT id FROM members WHERE group_id = ? AND handle = ?`, groupID, handle,
@@ -130,6 +118,12 @@ func (s *Store) GetMemberByHandle(groupID int64, handle string) (int64, error) {
 		`SELECT id FROM members WHERE group_id = ? AND handle = ?`, groupID, handle,
 	).Scan(&id)
 	return id, err
+}
+
+// UpdateMemberName sets the display name for a member.
+func (s *Store) UpdateMemberName(memberID int64, name string) error {
+	_, err := s.db.Exec(`UPDATE members SET name = ? WHERE id = ?`, name, memberID)
+	return err
 }
 
 // GetGroupMembers returns all member handles for a group.
