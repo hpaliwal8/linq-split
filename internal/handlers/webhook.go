@@ -6,6 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/hpaliwal8/linq-split/internal/db"
 	"github.com/hpaliwal8/linq-split/internal/linq"
@@ -272,20 +275,79 @@ func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, e
 }
 
 func (c *Config) handleQuery(groupID int64, p *parser.ParsedMessage) (string, error) {
-	// For now, return a basic spending summary.
-	// A more advanced version would parse the query and filter by category/time.
-	netBalances, err := c.Store.GetNetBalances(groupID)
+	since, label := timeRangeFromQuery(p.QueryText)
+
+	categories, total, err := c.Store.GetSpendingSince(groupID, since)
 	if err != nil {
 		return "", err
 	}
 
-	debts := settle.Simplify(netBalances)
-	nameFunc := func(id int64) string {
-		info, _ := c.Store.GetMemberInfo(id)
-		return displayName(info)
+	if total == 0 {
+		return fmt.Sprintf("No expenses recorded %s.", label), nil
 	}
 
-	return "Here's the current state:\n\n" + settle.FormatDebts(debts, nameFunc), nil
+	// Sort categories by amount descending
+	type catAmt struct {
+		cat string
+		amt float64
+	}
+	var sorted []catAmt
+	for cat, amt := range categories {
+		sorted = append(sorted, catAmt{cat, amt})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].amt > sorted[j].amt
+	})
+
+	// Check if the query mentions a specific category
+	focusCategory := categoryFromQuery(p.QueryText)
+
+	var result string
+	if focusCategory != "" {
+		amt := categories[focusCategory]
+		if amt == 0 {
+			return fmt.Sprintf("Nothing spent on %s %s.", focusCategory, label), nil
+		}
+		result = fmt.Sprintf("Spent $%.2f on %s %s.", amt, focusCategory, label)
+	} else {
+		result = fmt.Sprintf("Spending %s — $%.2f total:\n\n", label, total)
+		for _, ca := range sorted {
+			pct := (ca.amt / total) * 100
+			result += fmt.Sprintf("  %-16s $%.2f (%.0f%%)\n", ca.cat, ca.amt, pct)
+		}
+	}
+
+	return result, nil
+}
+
+// timeRangeFromQuery detects a time window from natural language.
+// Returns the start time and a human-readable label.
+func timeRangeFromQuery(q string) (time.Time, string) {
+	q = strings.ToLower(q)
+	now := time.Now()
+
+	if strings.Contains(q, "week") {
+		return now.AddDate(0, 0, -7), "in the last 7 days"
+	}
+	if strings.Contains(q, "month") {
+		return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()), "this month"
+	}
+	if strings.Contains(q, "year") {
+		return time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location()), "this year"
+	}
+	return time.Time{}, "all time"
+}
+
+// categoryFromQuery checks if the query names a specific spending category.
+func categoryFromQuery(q string) string {
+	q = strings.ToLower(q)
+	known := []string{"food", "groceries", "drinks", "transport", "utilities", "rent", "entertainment", "travel"}
+	for _, cat := range known {
+		if strings.Contains(q, cat) {
+			return cat
+		}
+	}
+	return ""
 }
 
 // displayName returns the best available display name for a member.

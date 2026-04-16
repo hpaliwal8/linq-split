@@ -13,27 +13,27 @@ import (
 type Intent string
 
 const (
-	IntentAddExpense  Intent = "add_expense"
-	IntentCustomSplit Intent = "custom_split"
+	IntentAddExpense   Intent = "add_expense"
+	IntentCustomSplit  Intent = "custom_split"
 	IntentCheckBalance Intent = "check_balance"
-	IntentSettle      Intent = "settle"
-	IntentQuery       Intent = "query"
-	IntentIgnore      Intent = "ignore"
+	IntentSettle       Intent = "settle"
+	IntentQuery        Intent = "query"
+	IntentIgnore       Intent = "ignore"
 )
 
 // ParsedMessage is the structured output from the LLM.
 type ParsedMessage struct {
-	Intent      Intent            `json:"intent"`
-	Amount      float64           `json:"amount,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Category    string            `json:"category,omitempty"`
-	Payer       string            `json:"payer,omitempty"`       // handle/phone of who paid
-	Excluded    []string          `json:"excluded,omitempty"`    // handles to exclude from split
+	Intent      Intent             `json:"intent"`
+	Amount      float64            `json:"amount,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Category    string             `json:"category,omitempty"`
+	Payer       string             `json:"payer,omitempty"`        // handle/phone of who paid
+	Excluded    []string           `json:"excluded,omitempty"`     // handles to exclude from split
 	CustomSplit map[string]float64 `json:"custom_split,omitempty"` // handle -> specific amount owed
-	SettleFrom  string            `json:"settle_from,omitempty"`
-	SettleTo    string            `json:"settle_to,omitempty"`
-	QueryText   string            `json:"query_text,omitempty"`
-	Confidence  float64           `json:"confidence"`
+	SettleFrom  string             `json:"settle_from,omitempty"`
+	SettleTo    string             `json:"settle_to,omitempty"`
+	QueryText   string             `json:"query_text,omitempty"`
+	Confidence  float64            `json:"confidence"`
 }
 
 // ClaudeParser calls the Anthropic API to parse expense messages.
@@ -103,7 +103,7 @@ func (p *ClaudeParser) Parse(text, senderHandle string, groupMembers []string) (
 	)
 
 	reqBody := map[string]any{
-		"model":      "claude-sonnet-4-20250514",
+		"model":      "claude-sonnet-4-6",
 		"max_tokens": 512,
 		"system":     systemPrompt,
 		"messages": []map[string]string{
