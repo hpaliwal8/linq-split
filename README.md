@@ -89,7 +89,7 @@ curl -X POST https://api.linqapp.com/api/partner/v3/webhook-subscriptions \
   -H "Authorization: Bearer $LINQ_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_url": "https://YOUR-NGROK-URL/webhook",
+    "target_url": "https://https://penholder-broom-velvet.ngrok-free.dev/webhook",
     "subscribed_events": [
       "message.received",
       "reaction.added"

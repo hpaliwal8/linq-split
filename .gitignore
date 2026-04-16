@@ -1,1 +1,5 @@
 .env
+
+# documentation
+*.md
+!README.md
