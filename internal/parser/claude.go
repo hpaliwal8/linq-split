@@ -109,6 +109,9 @@ Classify each message into exactly one intent:
 
 9. "edit_expense" — change the amount or description of a previous expense.
    Examples: "change last expense to $35", "the groceries were actually $52", "update pizza to $30"
+   Also covers casual in-context corrections immediately after an expense was logged:
+   Examples: "sorry, it was $15", "actually $25", "oops $12", "my bad, $22 not $20", "correction: $18", "it was $15 not $20"
+   When the correction gives only a dollar amount with no description, set expense_ref to "" (meaning the most recent expense) and new_amount to the corrected value.
    Extract: expense_ref, new_amount (if changing amount), new_description (if changing description).
 
 10. "ignore" — not related to expenses at all.
