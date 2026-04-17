@@ -59,6 +59,12 @@ type MessagePart struct {
 	Value string `json:"value"` // the actual text content
 }
 
+// MessageEffect is an optional iMessage effect applied at the message level.
+type MessageEffect struct {
+	Type string `json:"type"` // "screen" or "bubble"
+	Name string `json:"name"` // e.g. "confetti", "fireworks", "balloons"
+}
+
 type Sender struct {
 	Handle string `json:"handle"` // phone number in E.164
 	Name   string `json:"name"`   // contact name if available
@@ -114,17 +120,18 @@ type sendRequest struct {
 	ChatID  string `json:"chat_id"`
 	From    string `json:"from"`
 	Message struct {
-		Parts []MessagePart `json:"parts"`
+		Parts  []MessagePart  `json:"parts"`
+		Effect *MessageEffect `json:"effect,omitempty"`
 	} `json:"message"`
 }
 
-// SendText sends a text message to a chat.
-func (c *Client) SendText(chatID, text string) error {
-	req := sendRequest{
-		ChatID: chatID,
-		From:   c.fromNumber,
-	}
+// SendText sends a text message to a chat, with an optional iMessage screen effect.
+func (c *Client) SendText(chatID, text string, effect ...string) error {
+	req := sendRequest{ChatID: chatID, From: c.fromNumber}
 	req.Message.Parts = []MessagePart{{Type: "text", Value: text}}
+	if len(effect) > 0 && effect[0] != "" {
+		req.Message.Effect = &MessageEffect{Type: "screen", Name: effect[0]}
+	}
 	return c.post("/chats/"+chatID+"/messages", req)
 }
 

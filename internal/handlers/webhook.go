@@ -140,6 +140,7 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 
 	// ── Route by intent ──────────────────────────────────────────
 	var reply string
+	var effect string
 
 	switch parsed.Intent {
 	case parser.IntentAddExpense:
@@ -150,6 +151,7 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		reply, err = c.handleCheckBalance(groupID)
 	case parser.IntentSettle:
 		reply, err = c.handleSettle(groupID, parsed)
+		effect = "confetti"
 	case parser.IntentQuery:
 		reply, err = c.handleQuery(groupID, parsed)
 	case parser.IntentRegister:
@@ -167,10 +169,11 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 	if err != nil {
 		log.Printf("error handling %s: %v", parsed.Intent, err)
 		reply = "Something went wrong processing that. Try again?"
+		effect = ""
 	}
 
 	if reply != "" {
-		if err := c.LinqClient.SendText(chatID, reply); err != nil {
+		if err := c.LinqClient.SendText(chatID, reply, effect); err != nil {
 			log.Printf("error sending reply: %v", err)
 		}
 	}
@@ -348,7 +351,7 @@ func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, e
 	fromInfo, _ := c.Store.GetMemberInfo(fromID)
 	toInfo, _ := c.Store.GetMemberInfo(toID)
 	return fmt.Sprintf(
-		"Congratulations! %s paid %s $%.2f. Balances updated.",
+		"Settled! %s paid %s $%.2f. Balances updated.",
 		displayName(fromInfo), displayName(toInfo), p.Amount,
 	), nil
 }
