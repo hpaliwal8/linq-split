@@ -19,6 +19,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	db.SetMaxOpenConns(1) // SQLite supports only one writer at a time
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
@@ -202,15 +203,6 @@ func (s *Store) AddSettlement(groupID, fromID, toID int64, amount float64) error
 
 // ── Balance calculations ─────────────────────────────────────────────
 
-// Balance represents what one member owes another.
-type Balance struct {
-	FromHandle string
-	FromName   string
-	ToHandle   string
-	ToName     string
-	Amount     float64
-}
-
 // GetBalances calculates net balances for a group.
 // Positive = they're owed money. Negative = they owe money.
 func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
@@ -306,10 +298,12 @@ type MemberInfo struct {
 // GetMemberInfo returns member info by ID.
 func (s *Store) GetMemberInfo(memberID int64) (*MemberInfo, error) {
 	m := &MemberInfo{ID: memberID}
-	err := s.db.QueryRow(
+	if err := s.db.QueryRow(
 		`SELECT handle, name FROM members WHERE id = ?`, memberID,
-	).Scan(&m.Handle, &m.Name)
-	return m, err
+	).Scan(&m.Handle, &m.Name); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // GetAllMembers returns all members in a group.
@@ -435,11 +429,19 @@ func (s *Store) loadSplits(expenseID int64) (map[int64]float64, error) {
 }
 
 // VoidExpense soft-deletes an expense by setting voided_at.
+// Returns sql.ErrNoRows if the expense doesn't exist or is already voided.
 func (s *Store) VoidExpense(expenseID int64) error {
-	_, err := s.db.Exec(
-		`UPDATE expenses SET voided_at = CURRENT_TIMESTAMP WHERE id = ?`, expenseID,
+	res, err := s.db.Exec(
+		`UPDATE expenses SET voided_at = CURRENT_TIMESTAMP WHERE id = ? AND voided_at IS NULL`, expenseID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // EditExpense updates an expense's amount/description and replaces its splits in one transaction.
