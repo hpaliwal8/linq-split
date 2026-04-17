@@ -185,7 +185,10 @@ func (s *Store) AddExpense(groupID, payerID int64, amount float64, desc, categor
 		}
 	}
 
-	return expenseID, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return expenseID, nil
 }
 
 // AddSettlement records a payment from one person to another.
@@ -211,32 +214,38 @@ type Balance struct {
 // GetBalances calculates net balances for a group.
 // Positive = they're owed money. Negative = they owe money.
 func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
 	balances := make(map[int64]float64)
 
 	// Money paid out (they're owed this much)
-	rows, err := s.db.Query(`
+	rows, err := tx.Query(`
 		SELECT payer_id, SUM(amount) FROM expenses
 		WHERE group_id = ? AND voided_at IS NULL GROUP BY payer_id
 	`, groupID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	for rows.Next() {
 		var memberID int64
 		var total float64
 		if err := rows.Scan(&memberID, &total); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		balances[memberID] += total
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
 	// Money they owe (subtract their splits)
-	rows2, err := s.db.Query(`
+	rows2, err := tx.Query(`
 		SELECT es.member_id, SUM(es.amount)
 		FROM expense_splits es
 		JOIN expenses e ON es.expense_id = e.id
@@ -246,22 +255,22 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows2.Close()
-
 	for rows2.Next() {
 		var memberID int64
 		var total float64
 		if err := rows2.Scan(&memberID, &total); err != nil {
+			rows2.Close()
 			return nil, err
 		}
 		balances[memberID] -= total
 	}
+	rows2.Close()
 	if err := rows2.Err(); err != nil {
 		return nil, err
 	}
 
 	// Factor in settlements
-	rows3, err := s.db.Query(`
+	rows3, err := tx.Query(`
 		SELECT from_id, to_id, SUM(amount)
 		FROM settlements WHERE group_id = ?
 		GROUP BY from_id, to_id
@@ -269,17 +278,17 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows3.Close()
-
 	for rows3.Next() {
 		var fromID, toID int64
 		var total float64
 		if err := rows3.Scan(&fromID, &toID, &total); err != nil {
+			rows3.Close()
 			return nil, err
 		}
 		balances[fromID] += total // paid out → reduces what they owe (balance moves toward 0)
 		balances[toID] -= total   // received → reduces what they're owed (balance moves toward 0)
 	}
+	rows3.Close()
 	if err := rows3.Err(); err != nil {
 		return nil, err
 	}
