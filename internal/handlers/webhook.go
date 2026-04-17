@@ -253,11 +253,15 @@ func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (strin
 		return "", err
 	}
 
+	names := make([]string, len(allMembers))
+	for i, m := range allMembers {
+		names[i] = displayName(m)
+	}
+
 	payerInfo, _ := c.Store.GetMemberInfo(payerID)
-	name := displayName(payerInfo)
 	return fmt.Sprintf(
-		"Got it! %s paid $%.2f for %s — split evenly (%d ways, $%.2f each).",
-		name, p.Amount, p.Description, len(allMembers), splitAmt,
+		"Got it! %s paid $%.2f for %s — split evenly between %s ($%.2f each).",
+		displayName(payerInfo), p.Amount, p.Description, strings.Join(names, ", "), splitAmt,
 	), nil
 }
 
@@ -277,6 +281,11 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 	allMembers, err := c.Store.GetAllMembers(groupID)
 	if err != nil {
 		return "", err
+	}
+
+	nameMap := make(map[int64]string, len(allMembers))
+	for _, m := range allMembers {
+		nameMap[m.ID] = displayName(m)
 	}
 
 	splits := make(map[int64]float64)
@@ -323,9 +332,31 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 	}
 
 	payerInfo, _ := c.Store.GetMemberInfo(payerID)
+	payerName := displayName(payerInfo)
+
+	if len(p.CustomSplit) > 0 {
+		// Show per-person amounts
+		parts := make([]string, 0, len(splits))
+		for memberID, amt := range splits {
+			parts = append(parts, fmt.Sprintf("%s $%.2f", nameMap[memberID], amt))
+		}
+		sort.Strings(parts)
+		return fmt.Sprintf(
+			"Got it! %s paid $%.2f for %s — %s.",
+			payerName, p.Amount, p.Description, strings.Join(parts, ", "),
+		), nil
+	}
+
+	// Even split (possibly with exclusions)
+	memberNames := make([]string, 0, len(splits))
+	for memberID := range splits {
+		memberNames = append(memberNames, nameMap[memberID])
+	}
+	sort.Strings(memberNames)
+	splitAmt := p.Amount / float64(len(splits))
 	return fmt.Sprintf(
-		"Got it! %s paid $%.2f for %s — custom split across %d people.",
-		displayName(payerInfo), p.Amount, p.Description, len(splits),
+		"Got it! %s paid $%.2f for %s — split evenly between %s ($%.2f each).",
+		payerName, p.Amount, p.Description, strings.Join(memberNames, ", "), splitAmt,
 	), nil
 }
 

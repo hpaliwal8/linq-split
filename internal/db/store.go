@@ -104,7 +104,7 @@ func (s *Store) EnsureGroup(chatID string) (int64, error) {
 func (s *Store) EnsureMember(groupID int64, handle, name string) (int64, error) {
 	_, err := s.db.Exec(
 		`INSERT INTO members (group_id, handle, name) VALUES (?, ?, ?)
-		 ON CONFLICT(group_id, handle) DO UPDATE SET name = excluded.name`,
+		 ON CONFLICT(group_id, handle) DO UPDATE SET name = COALESCE(NULLIF(excluded.name, ''), members.name)`,
 		groupID, handle, name,
 	)
 	if err != nil {
