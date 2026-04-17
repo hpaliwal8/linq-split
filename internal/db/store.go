@@ -148,7 +148,7 @@ func (s *Store) GetGroupMembers(groupID int64) ([]string, error) {
 		}
 		handles = append(handles, h)
 	}
-	return handles, nil
+	return handles, rows.Err()
 }
 
 // ── Expense operations ───────────────────────────────────────────────
@@ -169,7 +169,10 @@ func (s *Store) AddExpense(groupID, payerID int64, amount float64, desc, categor
 		return 0, err
 	}
 
-	expenseID, _ := res.LastInsertId()
+	expenseID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
 
 	for memberID, splitAmt := range splits {
 		_, err := tx.Exec(
@@ -227,6 +230,9 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		}
 		balances[memberID] += total
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	// Money they owe (subtract their splits)
 	rows2, err := s.db.Query(`
@@ -249,6 +255,9 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		}
 		balances[memberID] -= total
 	}
+	if err := rows2.Err(); err != nil {
+		return nil, err
+	}
 
 	// Factor in settlements
 	rows3, err := s.db.Query(`
@@ -269,6 +278,9 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		}
 		balances[fromID] += total // paid out → reduces what they owe (balance moves toward 0)
 		balances[toID] -= total   // received → reduces what they're owed (balance moves toward 0)
+	}
+	if err := rows3.Err(); err != nil {
+		return nil, err
 	}
 
 	return balances, nil
@@ -308,7 +320,7 @@ func (s *Store) GetAllMembers(groupID int64) ([]*MemberInfo, error) {
 		}
 		members = append(members, m)
 	}
-	return members, nil
+	return members, rows.Err()
 }
 
 // GetSpendingSince returns total spending by category since a given time.
@@ -334,7 +346,7 @@ func (s *Store) GetSpendingSince(groupID int64, since time.Time) (map[string]flo
 		categories[cat] = amt
 		total += amt
 	}
-	return categories, total, nil
+	return categories, total, rows.Err()
 }
 
 // ── Expense editing ──────────────────────────────────────────────────
@@ -409,7 +421,7 @@ func (s *Store) loadSplits(expenseID int64) (map[int64]float64, error) {
 		}
 		splits[memberID] = amt
 	}
-	return splits, nil
+	return splits, rows.Err()
 }
 
 // VoidExpense soft-deletes an expense by setting voided_at.

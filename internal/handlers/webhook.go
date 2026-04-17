@@ -224,6 +224,10 @@ func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (strin
 		return "", err
 	}
 
+	if len(allMembers) == 0 {
+		return "No members in this group yet.", nil
+	}
+
 	// Even split across all members
 	splitAmt := p.Amount / float64(len(allMembers))
 	splits := make(map[int64]float64)
