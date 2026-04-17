@@ -94,10 +94,15 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 	defer c.LinqClient.StopTyping(chatID)
 
 	// ── Ensure group + sender exist ──────────────────────────────
-	groupID, err := c.Store.EnsureGroup(chatID)
+	groupID, isNew, err := c.Store.EnsureGroup(chatID)
 	if err != nil {
 		log.Printf("error ensuring group: %v", err)
 		return
+	}
+
+	if isNew {
+		welcome := "👋 Hi! I'm your group expense splitter. I'll track who paid what and keep balances up to date.\n\nTo get started, everyone please introduce yourself: \"I'm Jake\""
+		_ = c.LinqClient.SendText(chatID, welcome)
 	}
 
 	memberID, err := c.Store.EnsureMember(groupID, senderHandle, senderName)
@@ -163,7 +168,7 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 	case parser.IntentQuery:
 		reply, err = c.handleQuery(groupID, parsed)
 	case parser.IntentRegister:
-		reply, err = c.handleRegister(groupID, senderHandle, memberID, parsed)
+		reply, err = c.handleRegister(memberID, parsed)
 	case parser.IntentRegisterMember:
 		reply, err = c.handleRegisterMember(groupID, parsed)
 	case parser.IntentVoidExpense:
@@ -471,7 +476,7 @@ func (c *Config) resolveExpenseRef(groupID int64, ref string) (*db.ExpenseRecord
 	return c.Store.FindExpenseByRef(groupID, ref)
 }
 
-func (c *Config) handleRegister(groupID int64, handle string, memberID int64, p *parser.ParsedMessage) (string, error) {
+func (c *Config) handleRegister(memberID int64, p *parser.ParsedMessage) (string, error) {
 	name := strings.TrimSpace(p.RegisterName)
 	if name == "" {
 		return "Couldn't catch your name — try again, e.g. \"I'm Jake\".", nil

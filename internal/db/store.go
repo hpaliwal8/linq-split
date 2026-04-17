@@ -87,17 +87,18 @@ func (s *Store) migrate() error {
 
 // ── Group + Member operations ────────────────────────────────────────
 
-// EnsureGroup creates a group if it doesn't exist, returns its ID.
-func (s *Store) EnsureGroup(chatID string) (int64, error) {
-	_, err := s.db.Exec(
+// EnsureGroup creates a group if it doesn't exist, returns its ID and whether it was just created.
+func (s *Store) EnsureGroup(chatID string) (int64, bool, error) {
+	res, err := s.db.Exec(
 		`INSERT INTO groups (chat_id) VALUES (?) ON CONFLICT(chat_id) DO NOTHING`, chatID,
 	)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
+	affected, _ := res.RowsAffected()
 	var id int64
 	err = s.db.QueryRow(`SELECT id FROM groups WHERE chat_id = ?`, chatID).Scan(&id)
-	return id, err
+	return id, affected == 1, err
 }
 
 // EnsureMember creates a member if they don't exist, returns their ID.
