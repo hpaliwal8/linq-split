@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -61,7 +62,10 @@ func NewClaudeParser(apiKey string) *ClaudeParser {
 const systemPrompt = `You are an expense-parsing agent in an iMessage group chat called "Split".
 Your job is to classify incoming messages and extract structured data.
 
-Members are identified by phone number handles (E.164 format like +15551234567) or by @name mentions.
+Members are identified by E.164 phone handles (e.g. +15551234567). A name→handle mapping is provided
+in each request as "Name=+E164" pairs. When a message refers to someone by name (e.g. "Jake", "I", "me"),
+resolve them to their E.164 handle using the mapping. Always output E.164 handles — never bare names —
+in every output field: payer, settle_from, settle_to, excluded list, and custom_split keys.
 
 Classify each message into exactly one intent:
 
@@ -132,8 +136,8 @@ You MUST respond with raw JSON only. Do not use markdown code fences, do not inc
 // Parse sends a message to Claude and returns structured expense data.
 func (p *ClaudeParser) Parse(text, senderHandle string, groupMembers []string) (*ParsedMessage, error) {
 	userPrompt := fmt.Sprintf(
-		"Sender: %s\nGroup members: %v\nMessage: %s",
-		senderHandle, groupMembers, text,
+		"Sender: %s\nGroup members (Name=handle): %s\nMessage: %s",
+		senderHandle, strings.Join(groupMembers, ", "), text,
 	)
 
 	reqBody := map[string]any{

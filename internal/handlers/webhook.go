@@ -110,15 +110,29 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		}
 	}
 
-	// Get group members for context
-	members, err := c.Store.GetGroupMembers(groupID)
+	// Build name→handle context for the parser
+	allMembers, err := c.Store.GetAllMembers(groupID)
 	if err != nil {
 		log.Printf("error getting members: %v", err)
 		return
 	}
+	memberContext := make([]string, 0, len(allMembers))
+	for _, m := range allMembers {
+		if m.Name != "" {
+			memberContext = append(memberContext, fmt.Sprintf("%s=%s", m.Name, m.Handle))
+		} else {
+			memberContext = append(memberContext, m.Handle)
+		}
+	}
+
+	// Include sender's known name in their context string
+	senderContext := senderHandle
+	if senderName != "" {
+		senderContext = fmt.Sprintf("%s (%s)", senderName, senderHandle)
+	}
 
 	// ── Parse the message with Claude ────────────────────────────
-	parsed, err := c.Parser.Parse(text, senderHandle, members)
+	parsed, err := c.Parser.Parse(text, senderContext, memberContext)
 	if err != nil {
 		log.Printf("error parsing message: %v", err)
 		return
