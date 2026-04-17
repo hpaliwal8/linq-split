@@ -267,8 +267,8 @@ func (s *Store) GetNetBalances(groupID int64) (map[int64]float64, error) {
 		if err := rows3.Scan(&fromID, &toID, &total); err != nil {
 			return nil, err
 		}
-		balances[fromID] -= total // they paid out, so their positive balance decreases
-		balances[toID] += total   // they received payment, so their negative balance decreases
+		balances[fromID] += total // paid out → reduces what they owe (balance moves toward 0)
+		balances[toID] -= total   // received → reduces what they're owed (balance moves toward 0)
 	}
 
 	return balances, nil
