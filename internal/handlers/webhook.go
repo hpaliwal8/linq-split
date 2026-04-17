@@ -334,7 +334,7 @@ func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, e
 	fromInfo, _ := c.Store.GetMemberInfo(fromID)
 	toInfo, _ := c.Store.GetMemberInfo(toID)
 	return fmt.Sprintf(
-		"Settled! %s paid %s $%.2f. Balances updated.",
+		"Congratulations! %s paid %s $%.2f. Balances updated.",
 		displayName(fromInfo), displayName(toInfo), p.Amount,
 	), nil
 }
