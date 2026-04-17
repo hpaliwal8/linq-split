@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 )
@@ -98,8 +97,12 @@ func (c *Client) GetContactCard(phoneNumber string) (*ContactCard, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, nil // not found — not fatal
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("contact card API returned %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
@@ -171,7 +174,6 @@ func VerifySignature(payload []byte, timestamp, signature, secret string) bool {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(timestamp + "." + string(payload)))
 	expected := hex.EncodeToString(mac.Sum(nil))
-	log.Printf("DEBUG sig: expected=%s got=%s match=%v", expected, signature, expected == signature)
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
@@ -200,6 +202,7 @@ func (c *Client) post(path string, body any) error {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("linq API %s returned %d: %s", path, resp.StatusCode, string(b))
 	}
+	_, _ = io.Copy(io.Discard, resp.Body) // drain so connection can be reused
 	return nil
 }
 
@@ -220,5 +223,6 @@ func (c *Client) delete(path string) error {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("linq API %s returned %d: %s", path, resp.StatusCode, string(b))
 	}
+	_, _ = io.Copy(io.Discard, resp.Body) // drain so connection can be reused
 	return nil
 }

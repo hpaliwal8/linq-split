@@ -58,7 +58,6 @@ func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Only handle inbound text messages
 	if event.EventType != "message.received" {
-		log.Printf("DEBUG skipping event_type=%q", event.EventType)
 		return
 	}
 	if event.Data.Direction == "outbound" {
@@ -117,6 +116,7 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 			name := strings.TrimSpace(card.FirstName + " " + card.LastName)
 			if name != "" {
 				_ = c.Store.UpdateMemberName(memberID, name)
+				senderName = name
 			}
 		}
 	}
@@ -403,6 +403,10 @@ func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, e
 	}
 	if err != nil {
 		return "", err
+	}
+
+	if fromID == toID {
+		return "That's the same person — settlement not recorded.", nil
 	}
 
 	if err := c.Store.AddSettlement(groupID, fromID, toID, p.Amount); err != nil {

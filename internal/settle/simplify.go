@@ -49,12 +49,12 @@ func Simplify(netBalances map[int64]float64) []Debt {
 	ci, di := 0, 0
 
 	for ci < len(creditors) && di < len(debtors) {
-		transfer := math.Min(creditors[ci].balance, debtors[di].balance)
+		transfer := math.Round(math.Min(creditors[ci].balance, debtors[di].balance)*100) / 100
 
 		debts = append(debts, Debt{
 			FromID: debtors[di].id,
 			ToID:   creditors[ci].id,
-			Amount: math.Round(transfer*100) / 100, // round to cents
+			Amount: transfer,
 		})
 
 		creditors[ci].balance -= transfer
