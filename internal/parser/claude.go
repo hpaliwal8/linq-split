@@ -87,8 +87,13 @@ Classify each message into exactly one intent:
    Examples: "how much does Jake owe Mike?", "what does Sarah owe me?", "does Alex owe anyone?"
    Optionally extract: balance_from (the person who owes), balance_to (the person owed) — both as E.164 handles.
 
-4. "settle" — someone records a payment between two people.
-   Examples: "@Jake paid @Hitansh $30", "I sent Mike $50"
+4. "settle" — someone confirms a payment that has already happened (past tense only).
+   Examples: "@Jake paid @Hitansh $30", "I sent Mike $50", "I paid Sarah back", "Mike transferred me $20"
+   ONLY classify as settle if the payment is described in past tense (paid, sent, transferred, gave, venmo'd, etc.).
+   Future tense or imperative do NOT qualify — classify those as "ignore":
+     "Jake will pay me $30" → ignore
+     "Jake pay me $30" → ignore
+     "remind Jake to pay $30" → ignore
    Extract: amount, settle_from, settle_to.
 
 5. "query" — question about spending history.
