@@ -150,21 +150,17 @@ func (c *Client) StopTyping(chatID string) error {
 
 // ── Reactions (tapbacks) ─────────────────────────────────────────────
 
-type reactionRequest struct {
-	ChatID    string `json:"chat_id"`
-	From      string `json:"from"`
-	MessageID string `json:"message_id"`
-	Reaction  string `json:"reaction"` // "love", "like", "dislike", "laugh", "emphasize", "question"
-}
-
 // React adds a tapback reaction to a message.
-func (c *Client) React(chatID, messageID, reaction string) error {
-	return c.post("/reactions", reactionRequest{
-		ChatID:    chatID,
-		From:      c.fromNumber,
-		MessageID: messageID,
-		Reaction:  reaction,
-	})
+// reaction must be one of: love, like, dislike, laugh, emphasize, question
+func (c *Client) React(messageID, reaction string) error {
+	body := struct {
+		Operation string `json:"operation"`
+		Type      string `json:"type"`
+	}{
+		Operation: "add",
+		Type:      reaction,
+	}
+	return c.post("/messages/"+messageID+"/reactions", body)
 }
 
 // ── Webhook signature verification ──────────────────────────────────

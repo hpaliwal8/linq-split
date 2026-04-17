@@ -78,6 +78,12 @@ func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		senderName = event.Data.SenderHandle.Name
 	}
 
+	// Ignore messages with no identifiable sender
+	if senderHandle == "" {
+		log.Printf("skipping message with no sender handle")
+		return
+	}
+
 	// Process in a goroutine so the webhook returns fast
 	go c.processMessage(chatID, text, senderHandle, senderName, messageID)
 }
@@ -151,7 +157,9 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		reply, err = c.handleCheckBalance(groupID)
 	case parser.IntentSettle:
 		reply, err = c.handleSettle(groupID, parsed)
-		effect = "confetti"
+		if err == nil && strings.HasPrefix(reply, "Settled") {
+			effect = "confetti"
+		}
 	case parser.IntentQuery:
 		reply, err = c.handleQuery(groupID, parsed)
 	case parser.IntentRegister:
@@ -178,12 +186,13 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		}
 	}
 
-	// React to the original message to confirm it was logged
-	if parsed.Intent == parser.IntentAddExpense || parsed.Intent == parser.IntentCustomSplit {
-		_ = c.LinqClient.React(chatID, messageID, "like")
+	// React only when the expense was actually logged (not on unknown-member or error replies)
+	if (parsed.Intent == parser.IntentAddExpense || parsed.Intent == parser.IntentCustomSplit) &&
+		err == nil && strings.HasPrefix(reply, "Got it") {
+		_ = c.LinqClient.React(messageID, "like")
 	}
-	if parsed.Intent == parser.IntentSettle {
-		_ = c.LinqClient.React(chatID, messageID, "love")
+	if parsed.Intent == parser.IntentSettle && effect == "confetti" {
+		_ = c.LinqClient.React(messageID, "love")
 	}
 }
 
@@ -211,6 +220,10 @@ func (c *Config) handleRegisterMember(groupID int64, p *parser.ParsedMessage) (s
 }
 
 func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (string, error) {
+	if p.Amount <= 0 {
+		return "Couldn't parse an amount — try again, e.g. \"$47.50 groceries\".", nil
+	}
+
 	payerID, err := c.Store.GetMemberByHandle(groupID, p.Payer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return unknownMemberReply(p.Payer), nil
@@ -249,6 +262,10 @@ func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (strin
 }
 
 func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (string, error) {
+	if p.Amount <= 0 {
+		return "Couldn't parse an amount — try again, e.g. \"$60 dinner, exclude @Jake\".", nil
+	}
+
 	payerID, err := c.Store.GetMemberByHandle(groupID, p.Payer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return unknownMemberReply(p.Payer), nil
@@ -332,6 +349,10 @@ func (c *Config) handleCheckBalance(groupID int64) (string, error) {
 }
 
 func (c *Config) handleSettle(groupID int64, p *parser.ParsedMessage) (string, error) {
+	if p.Amount <= 0 {
+		return "Couldn't parse an amount — try again, e.g. \"Jake paid Mike $30\".", nil
+	}
+
 	fromID, err := c.Store.GetMemberByHandle(groupID, p.SettleFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return unknownMemberReply(p.SettleFrom), nil
