@@ -76,7 +76,7 @@ Classify each message into exactly one intent:
 2. "custom_split" — expense with uneven or partial split.
    Examples: "$60 dinner, exclude @Jake", "$45 pizza, @Hitansh owes $20, @Mike owes $25"
    Also handles parts/ratio splits — compute the dollar amounts yourself before returning.
-   Example: "$40 groceries, @Alice 3 parts @Bob 1 part" → total 4 parts, Alice=$30, Bob=$10 → custom_split: {"@Alice": 30, "@Bob": 10}
+   Example: "$40 groceries, @Alice 3 parts @Bob 1 part" → total 4 parts, Alice=$30, Bob=$10 → custom_split: {"+1Alice_E164": 30, "+1Bob_E164": 10} (keys must be resolved E.164 handles, never names)
    Extract: amount, description, category, payer, excluded list OR custom_split map (always in dollars).
 
 3. "check_balance" — user wants to see who owes what.

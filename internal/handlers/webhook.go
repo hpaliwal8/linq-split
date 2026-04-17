@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type Config struct {
 // HandleWebhook processes inbound Linq webhook events.
 func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	log.Printf("webhook received from %s", r.RemoteAddr)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -253,7 +255,7 @@ func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (strin
 		splits[m.ID] = splitAmt
 	}
 
-	_, err = c.Store.AddExpense(groupID, payerID, p.Amount, p.Description, p.Category, splits)
+	_, err = c.Store.AddExpense(groupID, payerID, p.Amount, p.Description, strings.ToLower(p.Category), splits)
 	if err != nil {
 		return "", err
 	}
@@ -296,6 +298,18 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 	splits := make(map[int64]float64)
 
 	if len(p.CustomSplit) > 0 {
+		// Validate that explicit amounts sum to the total
+		var splitTotal float64
+		for _, amt := range p.CustomSplit {
+			splitTotal += amt
+		}
+		if math.Abs(splitTotal-p.Amount) > 0.02 {
+			return fmt.Sprintf(
+				"The individual amounts add up to $%.2f but the total is $%.2f — please re-send with matching amounts.",
+				splitTotal, p.Amount,
+			), nil
+		}
+
 		// Explicit amounts per person
 		for handle, amt := range p.CustomSplit {
 			memberID, err := c.Store.GetMemberByHandle(groupID, handle)
@@ -331,7 +345,7 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 		}
 	}
 
-	_, err = c.Store.AddExpense(groupID, payerID, p.Amount, p.Description, p.Category, splits)
+	_, err = c.Store.AddExpense(groupID, payerID, p.Amount, p.Description, strings.ToLower(p.Category), splits)
 	if err != nil {
 		return "", err
 	}
@@ -455,13 +469,26 @@ func (c *Config) handleEditExpense(groupID int64, p *parser.ParsedMessage) (stri
 		newDescription = p.NewDescription
 	}
 
-	// Recalculate splits proportionally if amount changed
+	// Recalculate splits proportionally if amount changed.
+	// The last member absorbs any rounding remainder so splits always sum exactly to newAmount.
 	newSplits := e.Splits
 	if p.NewAmount > 0 && e.Amount > 0 {
 		ratio := p.NewAmount / e.Amount
+		memberIDs := make([]int64, 0, len(e.Splits))
+		for id := range e.Splits {
+			memberIDs = append(memberIDs, id)
+		}
+		slices.Sort(memberIDs)
 		newSplits = make(map[int64]float64, len(e.Splits))
-		for memberID, amt := range e.Splits {
-			newSplits[memberID] = math.Round(amt*ratio*100) / 100
+		var allocated float64
+		for i, memberID := range memberIDs {
+			if i == len(memberIDs)-1 {
+				newSplits[memberID] = math.Round((p.NewAmount-allocated)*100) / 100
+			} else {
+				rounded := math.Round(e.Splits[memberID]*ratio*100) / 100
+				newSplits[memberID] = rounded
+				allocated += rounded
+			}
 		}
 	}
 

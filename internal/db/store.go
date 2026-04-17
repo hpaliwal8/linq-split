@@ -331,9 +331,9 @@ func (s *Store) GetAllMembers(groupID int64) ([]*MemberInfo, error) {
 // GetSpendingSince returns total spending by category since a given time.
 func (s *Store) GetSpendingSince(groupID int64, since time.Time) (map[string]float64, float64, error) {
 	rows, err := s.db.Query(`
-		SELECT category, SUM(amount) FROM expenses
+		SELECT LOWER(category), SUM(amount) FROM expenses
 		WHERE group_id = ? AND created_at >= ? AND voided_at IS NULL
-		GROUP BY category
+		GROUP BY LOWER(category)
 	`, groupID, since)
 	if err != nil {
 		return nil, 0, err
