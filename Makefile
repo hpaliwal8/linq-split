@@ -4,7 +4,7 @@ build:
 	go build -o bin/linq-split ./cmd/linq-split
 
 run: build
-	export $$(grep -v '^#' .env | xargs) && ./bin/linq-split
+	set -a && . ./.env && set +a && ./bin/linq-split
 
 test:
 	go test ./... -v -count=1

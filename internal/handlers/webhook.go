@@ -29,6 +29,7 @@ type Config struct {
 
 // HandleWebhook processes inbound Linq webhook events.
 func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	log.Printf("webhook received from %s", r.RemoteAddr)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -39,6 +40,8 @@ func (c *Config) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	timestamp := r.Header.Get("X-Webhook-Timestamp")
 	signature := r.Header.Get("X-Webhook-Signature")
 	if !linq.VerifySignature(body, timestamp, signature, c.WebhookSecret) {
+		log.Printf("signature mismatch — timestamp=%s len(body)=%d secret_len=%d secret_last4=%q",
+			timestamp, len(body), len(c.WebhookSecret), c.WebhookSecret[max(0, len(c.WebhookSecret)-4):])
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
@@ -137,6 +140,8 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 		reply, err = c.handleQuery(groupID, parsed)
 	case parser.IntentRegister:
 		reply, err = c.handleRegister(groupID, senderHandle, memberID, parsed)
+	case parser.IntentRegisterMember:
+		reply, err = c.handleRegisterMember(groupID, parsed)
 	case parser.IntentVoidExpense:
 		reply, err = c.handleVoidExpense(groupID, parsed)
 	case parser.IntentEditExpense:
@@ -168,8 +173,24 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 // ── Intent handlers ──────────────────────────────────────────────────
 
 // unknownMemberReply returns a friendly message when a handle can't be found.
+// Nothing is logged when this is returned.
 func unknownMemberReply(handle string) string {
-	return fmt.Sprintf("I don't recognise %s yet — they need to send a message in this group first.", handle)
+	return fmt.Sprintf(
+		"I don't recognise %s — nothing was logged. Register them first with: \"<name> is <phone>\" (e.g. \"Jake is +15551234567\"), then retry.",
+		handle,
+	)
+}
+
+func (c *Config) handleRegisterMember(groupID int64, p *parser.ParsedMessage) (string, error) {
+	name := strings.TrimSpace(p.RegisterName)
+	handle := strings.TrimSpace(p.RegisterHandle)
+	if name == "" || handle == "" {
+		return "Couldn't catch that. Try: \"Jake is +15551234567\".", nil
+	}
+	if _, err := c.Store.EnsureMember(groupID, handle, name); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Got it, registered %s (%s)! Now retry your command.", name, handle), nil
 }
 
 func (c *Config) handleAddExpense(groupID int64, p *parser.ParsedMessage) (string, error) {
@@ -226,8 +247,11 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 		// Explicit amounts per person
 		for handle, amt := range p.CustomSplit {
 			memberID, err := c.Store.GetMemberByHandle(groupID, handle)
+			if errors.Is(err, sql.ErrNoRows) {
+				return unknownMemberReply(handle), nil
+			}
 			if err != nil {
-				continue
+				return "", err
 			}
 			splits[memberID] = amt
 		}

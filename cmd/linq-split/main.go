@@ -33,10 +33,6 @@ func main() {
 	// ── Routes ───────────────────────────────────────────────────────
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhook", cfg.HandleWebhook)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	})
 
 	// ── Start ────────────────────────────────────────────────────────
 	port := envOr("PORT", "8080")

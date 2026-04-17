@@ -19,9 +19,10 @@ const (
 	IntentSettle       Intent = "settle"
 	IntentQuery        Intent = "query"
 	IntentRegister     Intent = "register"
-	IntentVoidExpense  Intent = "void_expense"
-	IntentEditExpense  Intent = "edit_expense"
-	IntentIgnore       Intent = "ignore"
+	IntentVoidExpense      Intent = "void_expense"
+	IntentEditExpense      Intent = "edit_expense"
+	IntentRegisterMember   Intent = "register_member"
+	IntentIgnore           Intent = "ignore"
 )
 
 // ParsedMessage is the structured output from the LLM.
@@ -37,6 +38,7 @@ type ParsedMessage struct {
 	SettleTo      string             `json:"settle_to,omitempty"`
 	QueryText     string             `json:"query_text,omitempty"`
 	RegisterName   string             `json:"register_name,omitempty"`
+	RegisterHandle string             `json:"register_handle,omitempty"` // phone handle for register_member
 	ExpenseRef     string             `json:"expense_ref,omitempty"`
 	NewAmount      float64            `json:"new_amount,omitempty"`
 	NewDescription string             `json:"new_description,omitempty"`
@@ -84,24 +86,28 @@ Classify each message into exactly one intent:
    Examples: "how much have we spent this month?", "what did we spend on food?"
    Extract: query_text.
 
-6. "register" — someone is telling the bot their name.
+6. "register" — the sender is telling the bot their own name.
    Examples: "I'm Hitansh", "call me Jake", "my name is Sarah"
    Extract: register_name (just the name, no extra words).
 
-7. "void_expense" — cancel or delete a previously logged expense.
+7. "register_member" — someone is mapping a name to a phone number for another person.
+   Examples: "Jake is +15551234567", "Add Sarah as +44123456789", "+15551234567 is Mike", "register Mike as +15559876543"
+   Extract: register_name (the person's name), register_handle (their E.164 phone number).
+
+8. "void_expense" — cancel or delete a previously logged expense.
    Examples: "remove the last expense", "delete the pizza charge", "undo that $47 groceries"
    Extract: expense_ref ("last" if most recent, otherwise the description or amount mentioned).
 
-8. "edit_expense" — change the amount or description of a previous expense.
+9. "edit_expense" — change the amount or description of a previous expense.
    Examples: "change last expense to $35", "the groceries were actually $52", "update pizza to $30"
    Extract: expense_ref, new_amount (if changing amount), new_description (if changing description).
 
-9. "ignore" — not related to expenses at all.
+10. "ignore" — not related to expenses at all.
    Examples: "lol", "anyone want to grab coffee?", "good morning"
 
 Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema:
 {
-  "intent": "add_expense|custom_split|check_balance|settle|query|register|void_expense|edit_expense|ignore",
+  "intent": "add_expense|custom_split|check_balance|settle|query|register|register_member|void_expense|edit_expense|ignore",
   "amount": 0.00,
   "description": "",
   "category": "",
@@ -112,6 +118,7 @@ Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema
   "settle_to": "",
   "query_text": "",
   "register_name": "",
+  "register_handle": "",
   "expense_ref": "",
   "new_amount": 0.00,
   "new_description": "",
