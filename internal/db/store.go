@@ -23,6 +23,7 @@ func Open(path string) (*Store, error) {
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return s, nil
@@ -392,7 +393,7 @@ func (s *Store) FindExpenseByRef(groupID int64, ref string) (*ExpenseRecord, err
 		SELECT id, payer_id, amount, description, category
 		FROM expenses
 		WHERE group_id = ? AND voided_at IS NULL
-		  AND (description LIKE ? OR CAST(amount AS TEXT) = ?)
+		  AND (description LIKE ? OR ROUND(amount, 2) = ROUND(CAST(? AS REAL), 2))
 		ORDER BY created_at DESC LIMIT 1
 	`, groupID, "%"+ref+"%", ref)
 
@@ -452,12 +453,15 @@ func (s *Store) EditExpense(expenseID int64, newAmount float64, newDescription s
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(
+	res, err := tx.Exec(
 		`UPDATE expenses SET amount = ?, description = ? WHERE id = ?`,
 		newAmount, newDescription, expenseID,
 	)
 	if err != nil {
 		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
 	}
 
 	if _, err = tx.Exec(`DELETE FROM expense_splits WHERE expense_id = ?`, expenseID); err != nil {
