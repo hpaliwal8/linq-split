@@ -161,7 +161,7 @@ func (c *Config) processMessage(chatID, text, senderHandle, senderName, messageI
 	case parser.IntentCustomSplit:
 		reply, err = c.handleCustomSplit(groupID, parsed)
 	case parser.IntentCheckBalance:
-		reply, err = c.handleCheckBalance(groupID)
+		reply, err = c.handleCheckBalance(groupID, parsed)
 	case parser.IntentSettle:
 		reply, err = c.handleSettle(groupID, parsed)
 		if err == nil && strings.HasPrefix(reply, "Settled") {
@@ -379,7 +379,7 @@ func (c *Config) handleCustomSplit(groupID int64, p *parser.ParsedMessage) (stri
 	), nil
 }
 
-func (c *Config) handleCheckBalance(groupID int64) (string, error) {
+func (c *Config) handleCheckBalance(groupID int64, p *parser.ParsedMessage) (string, error) {
 	netBalances, err := c.Store.GetNetBalances(groupID)
 	if err != nil {
 		return "", err
@@ -393,6 +393,67 @@ func (c *Config) handleCheckBalance(groupID int64) (string, error) {
 			return "unknown"
 		}
 		return displayName(info)
+	}
+
+	// Directed query: "how much does A owe B?" — filter to named people only
+	if p.BalanceFrom != "" || p.BalanceTo != "" {
+		var fromID, toID int64
+		if p.BalanceFrom != "" {
+			fromID, err = c.Store.GetMemberByHandle(groupID, p.BalanceFrom)
+			if errors.Is(err, sql.ErrNoRows) {
+				return unknownMemberReply(p.BalanceFrom), nil
+			}
+			if err != nil {
+				return "", err
+			}
+		}
+		if p.BalanceTo != "" {
+			toID, err = c.Store.GetMemberByHandle(groupID, p.BalanceTo)
+			if errors.Is(err, sql.ErrNoRows) {
+				return unknownMemberReply(p.BalanceTo), nil
+			}
+			if err != nil {
+				return "", err
+			}
+		}
+
+		var filtered []settle.Debt
+		for _, d := range debts {
+			if p.BalanceFrom != "" && d.FromID != fromID {
+				continue
+			}
+			if p.BalanceTo != "" && d.ToID != toID {
+				continue
+			}
+			filtered = append(filtered, d)
+		}
+
+		if len(filtered) == 0 {
+			switch {
+			case p.BalanceFrom != "" && p.BalanceTo != "":
+				// Check whether the debt runs the other way before saying "nothing owed"
+				for _, d := range debts {
+					if d.FromID == toID && d.ToID == fromID {
+						return fmt.Sprintf(
+							"%s doesn't owe %s anything — it's the other way: %s owes %s $%.2f.",
+							nameFunc(fromID), nameFunc(toID),
+							nameFunc(toID), nameFunc(fromID), d.Amount,
+						), nil
+					}
+				}
+				return fmt.Sprintf("%s doesn't owe %s anything.", nameFunc(fromID), nameFunc(toID)), nil
+			case p.BalanceFrom != "":
+				return fmt.Sprintf("%s doesn't owe anyone anything.", nameFunc(fromID)), nil
+			default:
+				return fmt.Sprintf("Nobody owes %s anything.", nameFunc(toID)), nil
+			}
+		}
+		// For directed results, skip the group-balance header and reply inline
+		lines := make([]string, len(filtered))
+		for i, d := range filtered {
+			lines[i] = fmt.Sprintf("%s owes %s $%.2f", nameFunc(d.FromID), nameFunc(d.ToID), d.Amount)
+		}
+		return strings.Join(lines, "\n"), nil
 	}
 
 	return settle.FormatDebts(debts, nameFunc), nil

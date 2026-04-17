@@ -37,6 +37,8 @@ type ParsedMessage struct {
 	CustomSplit map[string]float64 `json:"custom_split,omitempty"` // handle -> specific amount owed
 	SettleFrom    string             `json:"settle_from,omitempty"`
 	SettleTo      string             `json:"settle_to,omitempty"`
+	BalanceFrom   string             `json:"balance_from,omitempty"` // handle for directed balance query
+	BalanceTo     string             `json:"balance_to,omitempty"`   // handle for directed balance query
 	QueryText     string             `json:"query_text,omitempty"`
 	RegisterName   string             `json:"register_name,omitempty"`
 	RegisterHandle string             `json:"register_handle,omitempty"` // phone handle for register_member
@@ -81,6 +83,9 @@ Classify each message into exactly one intent:
 
 3. "check_balance" — user wants to see who owes what.
    Examples: "who owes what?", "balances", "what's the tally?"
+   Also handles directed queries between two people:
+   Examples: "how much does Jake owe Mike?", "what does Sarah owe me?", "does Alex owe anyone?"
+   Optionally extract: balance_from (the person who owes), balance_to (the person owed) — both as E.164 handles.
 
 4. "settle" — someone records a payment between two people.
    Examples: "@Jake paid @Hitansh $30", "I sent Mike $50"
@@ -120,6 +125,8 @@ Respond with ONLY valid JSON. No markdown, no explanation. Use this exact schema
   "custom_split": {},
   "settle_from": "",
   "settle_to": "",
+  "balance_from": "",
+  "balance_to": "",
   "query_text": "",
   "register_name": "",
   "register_handle": "",
